@@ -1,0 +1,127 @@
+uniform float4x4 ViewProj;
+uniform float time_sec;
+uniform float4 sun_dir;       // normalized direction toward setting sun
+uniform float4 base_color;    // white set tint (e.g. warm off-white)
+uniform texture2d image;
+
+sampler_state linear_clamp {
+    Filter   = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+struct VertIn {
+    float4 pos    : POSITION;
+    float3 normal : NORMAL;
+    float2 uv     : TEXCOORD0;
+};
+
+struct VertOut {
+    float4 pos       : POSITION;
+    float3 world_pos : TEXCOORD0;
+    float3 normal    : TEXCOORD1;
+    float2 uv        : TEXCOORD2;
+};
+
+VertOut VSDefault(VertIn v) {
+    VertOut o;
+    o.pos       = mul(float4(v.pos.xyz, 1.0), ViewProj);
+    o.world_pos = v.pos.xyz;
+    o.normal    = v.normal;
+    o.uv        = v.uv;
+    return o;
+}
+
+/* 1. White Architectural Set (Warm Golden Sunlight + Soft Lavender/Peach Bounce) */
+float4 PSWhiteSet(VertOut v) : TARGET {
+    float3 n = normalize(v.normal);
+    float3 l = normalize(sun_dir.xyz);
+
+    float ndotl = saturate(dot(n, l));
+    float hemi  = n.y * 0.5 + 0.5;
+
+    // Warm golden key light + pastel sunset sky bounce + sandy floor bounce
+    float3 sky_bounce  = float3(1.00, 0.72, 0.78); // soft sunset pink
+    float3 sand_bounce = float3(0.96, 0.85, 0.74); // warm sand reflection
+    float3 sun_light   = float3(1.00, 0.84, 0.62) * ndotl * 0.65;
+    float3 ambient     = lerp(sand_bounce, sky_bounce, hemi) * 0.52;
+
+    // Subtle rim glow on white edges facing the ocean sunset
+    float3 view_approx = normalize(float3(0.0, 0.2, 1.0));
+    float rim = pow(1.0 - saturate(dot(n, view_approx)), 3.0) * 0.22;
+
+    float3 col = base_color.rgb * (ambient + sun_light) + float3(1.0, 0.68, 0.45) * rim;
+    return float4(saturate(col), 1.0);
+}
+
+/* 2. Sunset Sky & Animated Ocean Backdrop */
+float4 PSSunsetOcean(VertOut v) : TARGET {
+    // uv.y: 0 = top of sky, 1 = bottom
+    float horizon = 0.58;
+    float2 p = v.uv;
+
+    if (p.y < horizon) {
+        // Sky gradient: deep twilight purple -> coral pink -> golden peach
+        float sky_t = p.y / horizon;
+        float3 top_col = float3(0.18, 0.12, 0.36);
+        float3 mid_col = float3(0.95, 0.38, 0.46);
+        float3 hor_col = float3(1.00, 0.76, 0.42);
+
+        float3 sky = (sky_t < 0.55)
+            ? lerp(top_col, mid_col, sky_t / 0.55)
+            : lerp(mid_col, hor_col, (sky_t - 0.55) / 0.45);
+
+        // Glowing setting sun disc near center horizon
+        float2 sun_uv = float2(0.5, horizon - 0.08);
+        float2 delta  = (p - sun_uv) * float2(1.777, 1.0);
+        float  dist   = length(delta);
+        float  sun    = smoothstep(0.11, 0.075, dist);
+        float  halo   = exp(-dist * 7.0) * 0.55;
+
+        sky += float3(1.0, 0.88, 0.55) * (sun + halo);
+        return float4(saturate(sky), 1.0);
+    } else {
+        // Ocean water below horizon with animated golden sun path
+        float water_t = (p.y - horizon) / (1.0 - horizon);
+        float wave = sin(p.y * 140.0 + time_sec * 2.5) * 0.012
+                   + sin(p.x * 45.0 - time_sec * 1.8) * 0.008;
+
+        float3 deep_sea    = float3(0.12, 0.24, 0.38);
+        float3 sunset_sea  = float3(0.88, 0.48, 0.45);
+        float3 water = lerp(sunset_sea, deep_sea, pow(water_t, 0.6));
+
+        // Shimmering sun reflection strip across waves
+        float center_dist = abs((p.x + wave) - 0.5);
+        float glint = smoothstep(0.14 * (0.3 + water_t), 0.0, center_dist);
+        float sparkle = pow(saturate(sin(p.y * 220.0 - time_sec * 4.0) * 0.5 + 0.5), 3.0);
+        water += float3(1.0, 0.82, 0.48) * glint * (0.45 + 0.55 * sparkle);
+
+        return float4(saturate(water), 1.0);
+    }
+}
+
+/* 3. Textured Quads (Screen A, Screen B, Ape Squad Logo) */
+float4 PSTextured(VertOut v) : TARGET {
+    return image.Sample(linear_clamp, v.uv);
+}
+
+technique WhiteSet {
+    pass {
+        vertex_shader = VSDefault(v);
+        pixel_shader  = PSWhiteSet(v);
+    }
+}
+
+technique SunsetOcean {
+    pass {
+        vertex_shader = VSDefault(v);
+        pixel_shader  = PSSunsetOcean(v);
+    }
+}
+
+technique Textured {
+    pass {
+        vertex_shader = VSDefault(v);
+        pixel_shader  = PSTextured(v);
+    }
+}
