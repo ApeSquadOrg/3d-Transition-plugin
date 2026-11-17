@@ -71,43 +71,51 @@ static void parse_techniques(struct t3d_data *s, const char *path)
 {
 	s->num_techniques = 0;
 	char *file_data = os_quick_read_utf8_file(path);
-	if (!file_data)
+	if (!file_data) {
+		blog(LOG_WARNING, "[3D Engine] Could not read %s", path);
 		return;
-
-	char *line = file_data;
-	while (line && s->num_techniques < MAX_TECHNIQUES) {
-		char *next = strchr(line, '\n');
-		if (next)
-			*next++ = '\0';
-
-		char *p = line;
-		while (*p == ' ' || *p == '\t' || *p == '\r')
-			p++;
-
-		if (p[0] != '/' && p[0] != '*' &&
-		    strncmp(p, "technique", 9) == 0 &&
-		    (p[9] == ' ' || p[9] == '\t')) {
-			p += 9;
-			while (*p == ' ' || *p == '\t')
-				p++;
-
-			int idx = 0;
-			char name[MAX_TECH_LEN];
-			while (*p && (isalnum((unsigned char)*p) || *p == '_') &&
-			       idx < MAX_TECH_LEN - 1) {
-				name[idx++] = *p++;
-			}
-			name[idx] = '\0';
-
-			if (idx > 0 && gs_effect_get_technique(s->effect, name)) {
-				snprintf(s->techniques[s->num_techniques],
-				         MAX_TECH_LEN, "%s", name);
-				s->num_techniques++;
-			}
-		}
-		line = next;
 	}
 
+	const char *cur = file_data;
+	while ((cur = strstr(cur, "technique")) != NULL &&
+	       s->num_techniques < MAX_TECHNIQUES) {
+		bool valid_start = (cur == file_data) ||
+		                   isspace((unsigned char)cur[-1]);
+		cur += 9;
+
+		if (!valid_start ||
+		    !(*cur == ' ' || *cur == '\t' || *cur == '\r' || *cur == '\n'))
+			continue;
+
+		const char *line_start = cur - 9;
+		while (line_start > file_data && line_start[-1] != '\n')
+			line_start--;
+		const char *ls = line_start;
+		while (*ls == ' ' || *ls == '\t')
+			ls++;
+		if (ls[0] == '/' && ls[1] == '/')
+			continue;
+
+		while (*cur == ' ' || *cur == '\t' || *cur == '\r' || *cur == '\n')
+			cur++;
+
+		int idx = 0;
+		char name[MAX_TECH_LEN];
+		while (*cur && (isalnum((unsigned char)*cur) || *cur == '_') &&
+		       idx < MAX_TECH_LEN - 1) {
+			name[idx++] = *cur++;
+		}
+		name[idx] = '\0';
+
+		if (idx > 0 && gs_effect_get_technique(s->effect, name)) {
+			snprintf(s->techniques[s->num_techniques],
+			         MAX_TECH_LEN, "%s", name);
+			s->num_techniques++;
+		}
+	}
+
+	blog(LOG_INFO, "[3D Engine] Parsed %d techniques from %s",
+	     s->num_techniques, path);
 	bfree(file_data);
 }
 
