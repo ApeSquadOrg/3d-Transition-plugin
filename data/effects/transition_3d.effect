@@ -1,0 +1,90 @@
+uniform float4x4 ViewProj;
+uniform texture2d image;
+
+uniform float2 canvas_size;
+uniform float3 rot_rad;
+uniform float3 pos_offset;
+uniform float3 pivot;
+uniform float fov_deg;
+uniform float shade;
+uniform float alpha;
+
+sampler_state tex_sampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+struct FragData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+FragData VS3D(VertData v_in)
+{
+	FragData v_out;
+
+	float aspect = canvas_size.x / max(canvas_size.y, 1.0);
+
+	// Convert vertex (u, v) in [0..1] to centered 3D space [-aspect..+aspect, -1..+1, 0]
+	float3 p = float3(
+		(v_in.pos.x * 2.0 - 1.0) * aspect,
+		1.0 - v_in.pos.y * 2.0,
+		0.0
+	);
+
+	p -= pivot;
+
+	float cx = cos(rot_rad.x), sx = sin(rot_rad.x);
+	float cy = cos(rot_rad.y), sy = sin(rot_rad.y);
+	float cz = cos(rot_rad.z), sz = sin(rot_rad.z);
+
+	// Rotate X (Pitch), Y (Yaw), Z (Roll)
+	p = float3(p.x, p.y * cx - p.z * sx, p.y * sx + p.z * cx);
+	p = float3(p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy);
+	p = float3(p.x * cz - p.y * sz, p.x * sz + p.y * cz, p.z);
+
+	p += pivot + pos_offset;
+
+	float half_fov = radians(clamp(fov_deg, 10.0, 120.0)) * 0.5;
+	float cam_dist = 1.0 / tan(half_fov);
+	float depth_w  = max(cam_dist - p.z, 0.05);
+
+	float ndc_x = (p.x * cam_dist) / (aspect * depth_w);
+	float ndc_y = (p.y * cam_dist) / depth_w;
+
+	float2 screen_xy = float2(
+		(ndc_x * 0.5 + 0.5) * canvas_size.x,
+		(0.5 - ndc_y * 0.5) * canvas_size.y
+	);
+
+	float4 clip = mul(float4(screen_xy, 0.0, 1.0), ViewProj);
+	float2 ndc_clip = clip.xy / clip.w;
+
+	// Restore depth_w so GPU performs perspective-correct UV interpolation
+	v_out.pos = float4(ndc_clip * depth_w, 0.5 * depth_w, depth_w);
+	v_out.uv  = v_in.uv;
+	return v_out;
+}
+
+float4 PS3D(FragData f_in) : TARGET
+{
+	float4 col = image.Sample(tex_sampler, f_in.uv);
+	col.rgb *= shade;
+	col.a   *= alpha;
+	return col;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VS3D(v_in);
+		pixel_shader  = PS3D(f_in);
+	}
+}
