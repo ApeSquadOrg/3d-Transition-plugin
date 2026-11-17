@@ -75,7 +75,7 @@ static void parse_techniques(struct t3d_data *s, const char *path)
 		return;
 
 	char *line = file_data;
-	while (line && *line && s->num_techniques < MAX_TECHNIQUES) {
+	while (line && s->num_techniques < MAX_TECHNIQUES) {
 		char *next = strchr(line, '\n');
 		if (next)
 			*next++ = '\0';
